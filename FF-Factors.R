@@ -665,24 +665,13 @@ ticker = "PETR4"
 df <- AdjClose %>% 
   filter(Ticker == ticker) %>% 
   select(date, Ret) %>% 
-  rename(ticker = Ret) %>% 
   inner_join(FF_Factors, by = "date") %>% 
   filter(date >= "2018-01-01")
 df
 
 
-LR <- lm(ticker ~ RMRF + SMB + HML + RMW + CMA + WML + Rev, data = df)
+LR <- lm(Ret ~ RMRF + SMB + HML + RMW + CMA, data = df)
 summary(LR)
-
-
-
-
-
-
-
-
-
-
 
 
 

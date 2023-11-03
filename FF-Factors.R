@@ -66,14 +66,14 @@ BookValue <- read_excel("BookValeu.xlsx")[-1,] %>%
 BookValue
 
 
-EBITDA <- read_excel("EBITDA.xlsx")[-1,] %>% 
+OperatingProfitability <- read_excel("OperatingProfitability.xlsx")[-1,] %>% 
   mutate(date = as.Date(data), # convert to date format
          across(VALE3:WHMT3, as.numeric)) %>%  # convert to numeric format
   select(date, everything(), -data) %>% # select date, month and tickers
-  gather("Ticker", "EBITDA", -date) %>% # adjust to panel data
+  gather("Ticker", "OperatingProfitability", -date) %>% # adjust to panel data
   zoo::na.locf(fromLast = FALSE) %>% # fill omitted values from start
   na.omit()
-EBITDA
+OperatingProfitability
 
 
 ROA <- read_excel("ROA.xlsx")[-1,] %>% 
@@ -96,9 +96,9 @@ BooktoMarket <- MarketValue %>% # Book-to-Market Value
 BooktoMarket
 
 
-OperatingProfitability <- BookValue %>% # Operating Profitability
-  inner_join(EBITDA, by = c("date", "Ticker")) %>% # merge data frames
-  mutate(OP = EBITDA/ BookValue, 
+OperatingProfitability <- OperatingProfitability %>% 
+  inner_join(BookValue, by = c("date", "Ticker")) %>% # merge data frames
+  mutate(OP = OperatingProfitability/ BookValue, 
          m = month(date, label = TRUE)) %>% 
   select(date, Ticker, OP, m)
 OperatingProfitability
@@ -422,7 +422,6 @@ SMB_INV
 
 # Calculating Factor 
 
-
 SMB <- SMB_BM %>% # Small Minus Big Factor
   inner_join(SMB_OP, by = "date") %>% 
   inner_join(SMB_INV, by = "date") %>% 
@@ -572,7 +571,7 @@ WML <- map(Update, .f = function(x){ # Winners Minus Losers Factor
   
   SmallHigh <- Classification[[paste(x)]] %>% 
     filter(Size == "Small",
-           Mom == "Hihg") %>% # filtering companies
+           Mom == "High") %>% # filtering companies
     group_by(date) %>% # grouping all tickers by date
     summarise(SmallHigh = mean(Ret)) # calculating equal weight return
   
@@ -614,7 +613,7 @@ Rev <- map(Update, .f = function(x){ # Reversal Factor
   
   SmallHigh <- Classification[[paste(x)]] %>% 
     filter(Size == "Small",
-           Mom == "Hihg") %>% # filtering companies
+           Mom == "High") %>% # filtering companies
     group_by(date) %>% # grouping all tickers by date
     summarise(SmallHigh = mean(Ret)) # calculating equal weight return
   

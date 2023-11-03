@@ -1,0 +1,690 @@
+# More informations at: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/Data_Library/f-f_5_factors_2x3.html
+
+# Loading Packages
+
+library(tidyverse)
+library(lubridate)
+library(readxl)
+
+
+# Removing variables
+
+rm(list = ls())
+
+
+# Calculating Risk-Premium
+
+RMRF <- read_excel("IbovCDI.xlsx")[-1, c(1, 2, 3)] %>% 
+  na.omit() %>% 
+  mutate("date" = as.Date(data), # convert to date format
+         "Close" = as.numeric(Close), # Ibov Close price
+         "Rf" = as.numeric(Rf), # cumulative CDI
+         "Ret_mkt" = log(Close / lag(Close)), # get log return
+         "Ret_rf" = log(Rf / lag(Rf))) %>% # get daily Risk-free interest
+  select(date, Ret_mkt, Ret_rf) %>% 
+  na.omit() %>% 
+  mutate("RMRF" = Ret_mkt - Ret_rf) %>% # calculate risk-premium
+  select(date, RMRF)
+RMRF
+
+
+# Fetch data to create factors
+
+AdjClose <- read_excel("StockPrice.xlsx")[-1,] %>% 
+  mutate(date = as.Date(data), # convert to date format
+         across(VALE3:WHMT3, as.numeric)) %>%  # convert to numeric format
+  select(date, everything(), -data) %>% # select date and tickers
+  gather("Ticker", "AdjClose", -date) %>% # adjust to panel data
+  na.omit() %>% 
+  group_by(Ticker) %>% # calculate indicators of each ticker
+  mutate(Ret = log(AdjClose/ lag(AdjClose)),
+         Mom = log(AdjClose/ lag(AdjClose, 250)),
+         m = month(date, label = TRUE)) %>%  # extract month from date
+  ungroup() %>% 
+  na.omit()
+AdjClose
+
+
+MarketValue <- read_excel("MarketValue.xlsx")[-1,] %>% 
+  mutate(date = as.Date(data), # convert to date format
+         across(VALE3:WHMT3, as.numeric), # convert to numeric format
+         m = month(date, label = TRUE)) %>% # extract month from date
+  select(date, m, everything(), -data) %>% # select date, month and tickers
+  gather("Ticker", "MarketValue", -c(date, m)) %>% # adjust to panel data
+  na.omit()
+MarketValue
+
+
+BookValue <- read_excel("BookValeu.xlsx")[-1,] %>% 
+  zoo::na.fill(0) %>% # fill omited values
+  as_tibble() %>% # convert to tibble
+  mutate(date = as.Date(data), # convert to date format
+         across(VALE3:WHMT3, as.numeric)) %>%  # convert to numeric format
+  select(date, everything(), -data) %>% # select date, month and tickers
+  gather("Ticker", "BookValue", -c(date)) %>% # adjust to panel data
+  na.omit()
+BookValue
+
+
+EBITDA <- read_excel("EBITDA.xlsx")[-1,] %>% 
+  mutate(date = as.Date(data), # convert to date format
+         across(VALE3:WHMT3, as.numeric)) %>%  # convert to numeric format
+  select(date, everything(), -data) %>% # select date, month and tickers
+  gather("Ticker", "EBITDA", -date) %>% # adjust to panel data
+  zoo::na.locf(fromLast = FALSE) %>% # fill omitted values from start
+  na.omit()
+EBITDA
+
+
+ROA <- read_excel("ROA.xlsx")[-1,] %>% 
+  mutate(date = as.Date(data), # convert to date format
+         across(VALE3:WHMT3, as.numeric), # convert to numeric format
+         m = month(date, label = TRUE)) %>% # extract month from date
+  select(date, m, everything(), -data) %>% # select date, month and tickers
+  gather("Ticker", "ROA", -c(date, m)) %>% # adjust to panel data
+  zoo::na.locf(fromLast = FALSE) %>% # fill omitted values from start
+  na.omit()
+ROA
+
+
+# Create necessary indicators
+
+BooktoMarket <- MarketValue %>% # Book-to-Market Value
+  inner_join(BookValue, by = c("date", "Ticker")) %>% # merge to data frames
+  mutate(BM = MarketValue/ BookValue) %>% 
+  select(-c(MarketValue, BookValue))
+BooktoMarket
+
+
+OperatingProfitability <- BookValue %>% # Operating Profitability
+  inner_join(EBITDA, by = c("date", "Ticker")) %>% # merge data frames
+  mutate(OP = EBITDA/ BookValue, 
+         m = month(date, label = TRUE)) %>% 
+  select(date, Ticker, OP, m)
+OperatingProfitability
+
+
+# Choosing stocks on Ibovespa per year
+
+Month = "jun" # when we will update the factors
+
+MarketComposition <- read_excel("MarketComposition.xlsx") %>% 
+  mutate(date = as.Date(Data), # convert to date format
+         m = month(date, label = TRUE)) %>% # convert to numeric format
+  filter(m == Month) %>% # update factors 
+  select(date, everything(),-c(Data, m)) %>% # select date, month and tickers
+  gather("Ticker", "Composition", -date) %>% # adjust to panel data
+  na.omit() %>% 
+  group_by(date) %>% # Select tickers by last date of the month
+  summarise(Tickers = Ticker) %>% 
+  ungroup() 
+MarketComposition
+
+
+Update <- MarketComposition %>% 
+  select(date) %>% 
+  unique() %>% # avoid repetition
+  deframe() # create vector
+Update
+
+
+Symbols <- map(Update, .f = function(x){ # list of vectors with Ibov tickers per year
+  MarketComposition %>% 
+    filter(date == x) %>% # choose stocks presented on Ibov
+    select(Tickers) %>% 
+    unique() %>% # avoid repetition
+    deframe() # create vector
+})
+names(Symbols) <- Update
+Symbols
+
+
+# Classifying stocks with indicators 
+
+Size <- map(Update, .f = function(x){
+  # Defining stocks per size in Small and Big
+  Size <- MarketValue %>% 
+    filter(Ticker %in% Symbols[[paste(x)]], # filter Ibov stocks 
+           m == Month,
+           date <= x) %>% 
+    select(-m) %>% 
+    group_by(Ticker) %>% # grouping by ticker to select last value
+    summarise(date = last(date),
+              MarketValue = last(MarketValue)) %>% 
+    ungroup() %>% 
+    arrange(desc(MarketValue)) %>% # sorting stocks by size 
+    filter(MarketValue > 0) %>% # exclude negative Market Value
+    mutate(Size = case_when(MarketValue >= median(MarketValue) ~ "Big",
+                            T ~ "Small"))
+  
+  # Keep only the 9 biggest and the 9 smallest
+  biggest <- Size %>% head(9)
+  smallest <- Size %>% tail(9)
+  
+  biggest %>% 
+    bind_rows(smallest) %>% 
+    select(-MarketValue)
+})
+names(Size) <- Update
+Size
+
+
+BM <-  map(Update, .f = function(x){
+  # Defining stocks per value in Growth, Neutral or Value
+  BooktoMarket %>% 
+    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>% 
+    mutate(LowerQuantile = quantile(BM, 0.3),
+           UpperQuantile = quantile(BM, 0.7),
+           BM = case_when(BM <= LowerQuantile ~ "Growth",
+                          BM > LowerQuantile &
+                            BM < UpperQuantile ~ "Neutral",
+                          BM >= UpperQuantile ~ "Value")) %>% 
+    select(-c(Size, m, LowerQuantile, UpperQuantile))
+})
+names(BM) <- Update
+BM
+
+
+OP <- map(Update, .f = function(x){
+  # Defining stocks per profitability in Weak, Neutral or Robust
+  OperatingProfitability %>% 
+    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>% 
+    mutate(LowerQuantile = quantile(OP, 0.3),
+           UpperQuantile = quantile(OP, 0.7),
+           OP = case_when(OP <= LowerQuantile ~ "Weak",
+                          OP > LowerQuantile &
+                            OP < UpperQuantile ~ "Neutral",
+                          OP >= UpperQuantile ~ "Robust")) %>% 
+    select(-c(Size, m, LowerQuantile, UpperQuantile))
+})
+names(OP) <- Update
+OP
+
+
+Investment <- map(Update, .f = function(x){
+  # Defining stocks per investment in Conservative, Neutral or Aggressive
+  ROA %>% 
+    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>% 
+    mutate(LowerQuantile = quantile(ROA, 0.3),
+           UpperQuantile = quantile(ROA, 0.7),
+           Inv = case_when(ROA <= LowerQuantile ~ "Conservative",
+                           ROA > LowerQuantile &
+                             ROA < UpperQuantile ~ "Neutral",
+                           ROA >= UpperQuantile ~ "Aggressive")) %>% 
+    select(-c(Size, m, LowerQuantile, UpperQuantile))
+})
+names(Investment) <- Update
+Investment
+
+
+Mom <- map(Update, .f = function(x){
+  # Defining stocks per momentum in High or Low
+  AdjClose %>% 
+    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>%
+    mutate(Mom = case_when(Mom <= median(Mom) ~ "Low",
+                           Mom > median(Mom) ~ "High")) %>% 
+    select(-c(Size, m, AdjClose, Ret))
+})
+names(Mom) <- Update
+Mom
+
+
+Classification <- map(Update, .f = function(x){
+  # Merging all data frames 
+  Class <- Size[[paste(x)]] %>% 
+    inner_join(BM[[paste(x)]], by = c("date", "Ticker")) %>% 
+    inner_join(OP[[paste(x)]], by = c("date", "Ticker")) %>% 
+    inner_join(Investment[[paste(x)]], by = c("date", "Ticker")) %>% 
+    inner_join(Mom[[paste(x)]], by = c("date", "Ticker")) %>% 
+    select(- date)
+  
+  AdjClose %>% 
+    filter(Ticker %in% Symbols[[paste(x)]], # defining period of one year
+           date > x,
+           date <= x + 365) %>% 
+    select(- c(AdjClose, Mom, m)) %>% 
+    left_join(Class, by = "Ticker") %>% 
+    na.omit()
+}) 
+names(Classification) <- Update
+Classification
+
+
+# Portfolio construction
+
+SMB_BM <- map(Update, .f = function(x){ # Small minus Big Mook-to-Market Value
+  BigValue <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           BM == "Value") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigValue = mean(Ret)) # calculating equal weight return 
+  
+  BigNeutral <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           BM == "Neutral") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigNeutral = mean(Ret)) # calculating equal weight return
+  
+  BigGrowth <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           BM == "Growth") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigGrowth = mean(Ret)) # calculating equal weight return
+  
+  SmallValue <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           BM == "Value") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallValue = mean(Ret)) # calculating equal weight return
+  
+  SmallNeutral <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           BM == "Neutral") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallNeutral = mean(Ret)) # calculating equal weight return
+  
+  SmallGrowth <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           BM == "Growth") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallGrowth = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigValue %>% 
+    full_join(BigNeutral, by = "date") %>% 
+    full_join(BigGrowth, by = "date") %>% 
+    full_join(SmallValue, by = "date") %>% 
+    full_join(SmallNeutral, by = "date") %>% 
+    full_join(SmallGrowth, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigValue:SmallGrowth, as.numeric),
+           date = as.Date(date),
+           SMB_BM = (SmallValue + SmallNeutral + SmallGrowth)/3 - 
+             (BigValue + BigNeutral + BigGrowth)/3) %>% # Calculate SMB BM factor
+    select(date, SMB_BM)
+}) %>% 
+  bind_rows()
+SMB_BM
+
+
+SMB_OP <- map(Update, .f = function(x){ # Small minus Big Operating Profitability
+  BigRobust <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           OP == "Robust") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigRobust = mean(Ret)) # calculating equal weight return 
+  
+  BigNeutral <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           OP == "Neutral") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigNeutral = mean(Ret)) # calculating equal weight return
+  
+  BigWeak <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           OP == "Weak") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigWeak = mean(Ret)) # calculating equal weight return
+  
+  SmallRobust <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           OP == "Robust") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallRobust = mean(Ret)) # calculating equal weight return
+  
+  SmallNeutral <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           OP == "Neutral") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallNeutral = mean(Ret)) # calculating equal weight return
+  
+  SmallWeak <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           OP == "Weak") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallWeak = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigRobust %>% 
+    full_join(BigNeutral, by = "date") %>% 
+    full_join(BigWeak, by = "date") %>% 
+    full_join(SmallRobust, by = "date") %>% 
+    full_join(SmallNeutral, by = "date") %>% 
+    full_join(SmallWeak, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigRobust:SmallWeak, as.numeric),
+           date = as.Date(date),
+           SMB_OP = (SmallRobust + SmallNeutral + SmallWeak)/3 - 
+             (BigRobust + BigNeutral + BigWeak)/3) %>% # Calculate SMB OP factor
+    select(date, SMB_OP)
+}) %>% 
+  bind_rows()
+SMB_OP
+
+
+SMB_INV <- map(Update, .f = function(x){ # Small minus Big Investment
+  BigConservative <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Inv == "Conservative") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigConservative = mean(Ret)) # calculating equal weight return 
+  
+  BigNeutral <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Inv == "Neutral") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigNeutral = mean(Ret)) # calculating equal weight return
+  
+  BigAggressive <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Inv == "Aggressive") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigAggressive = mean(Ret)) # calculating equal weight return
+  
+  SmallConservative <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Inv == "Conservative") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallConservative = mean(Ret)) # calculating equal weight return
+  
+  SmallNeutral <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Inv == "Neutral") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallNeutral = mean(Ret)) # calculating equal weight return
+  
+  SmallAggressive <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Inv == "Aggressive") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallAggressive = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigConservative %>% 
+    full_join(BigNeutral, by = "date") %>% 
+    full_join(BigAggressive, by = "date") %>% 
+    full_join(SmallConservative, by = "date") %>% 
+    full_join(SmallNeutral, by = "date") %>% 
+    full_join(SmallAggressive, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigConservative:SmallAggressive, as.numeric),
+           date = as.Date(date),
+           SMB_INV = (SmallConservative + SmallNeutral + SmallAggressive)/3 - 
+             (BigConservative + BigNeutral + BigAggressive)/3) %>% # Calculate SMB I factor
+    select(date, SMB_INV)
+}) %>% 
+  bind_rows()
+SMB_INV
+
+
+# Calculating Factor 
+
+
+SMB <- SMB_BM %>% # Small Minus Big Factor
+  inner_join(SMB_OP, by = "date") %>% 
+  inner_join(SMB_INV, by = "date") %>% 
+  mutate(SMB = (SMB_BM + SMB_OP + SMB_INV)/3) %>% 
+  select(date, SMB)
+SMB
+
+
+HML <- map(Update, .f = function(x){ # High Minus Low Factor
+  BigValue <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           BM == "Value") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigValue = mean(Ret)) # calculating equal weight return 
+  
+  BigGrowth <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           BM == "Growth") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigGrowth = mean(Ret)) # calculating equal weight return
+  
+  SmallValue <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           BM == "Value") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallValue = mean(Ret)) # calculating equal weight return
+  
+  SmallGrowth <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           BM == "Growth") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallGrowth = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigValue %>% 
+    full_join(BigGrowth, by = "date") %>% 
+    full_join(SmallValue, by = "date") %>% 
+    full_join(SmallGrowth, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigValue:SmallGrowth, as.numeric),
+           date = as.Date(date),
+           HML = (BigValue + SmallValue)/2 - 
+             (BigGrowth + SmallGrowth)/2) %>% # Calculate HML
+    select(date, HML)
+}) %>% 
+  bind_rows()
+HML
+
+
+RMW <- map(Update, .f = function(x){ # Robust Minus Weak Factor
+  BigRobust <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           OP == "Robust") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigRobust = mean(Ret)) # calculating equal weight return 
+  
+  BigWeak <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           OP == "Weak") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigWeak = mean(Ret)) # calculating equal weight return
+  
+  SmallRobust <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           OP == "Robust") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallRobust = mean(Ret)) # calculating equal weight return
+  
+  SmallWeak <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           OP == "Weak") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallWeak = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigRobust %>% 
+    full_join(BigWeak, by = "date") %>% 
+    full_join(SmallRobust, by = "date") %>% 
+    full_join(SmallWeak, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigRobust:SmallWeak, as.numeric),
+           date = as.Date(date),
+           RMW = (BigRobust + SmallRobust)/2 - 
+             (BigWeak + SmallWeak)/2) %>% # Calculate RMW
+    select(date, RMW)
+}) %>% 
+  bind_rows()
+RMW
+
+
+CMA <- map(Update, .f = function(x){ # Conservative Minus Aggressive Factor
+  BigConservative <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Inv == "Conservative") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigConservative = mean(Ret)) # calculating equal weight return 
+  
+  BigAggressive <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Inv == "Aggressive") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigAggressive = mean(Ret)) # calculating equal weight return
+  
+  SmallConservative <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Inv == "Conservative") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallConservative = mean(Ret)) # calculating equal weight return
+  
+  SmallAggressive <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Inv == "Aggressive") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallAggressive = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigConservative %>% 
+    full_join(BigAggressive, by = "date") %>% 
+    full_join(SmallConservative, by = "date") %>% 
+    full_join(SmallAggressive, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigConservative:SmallAggressive, as.numeric),
+           date = as.Date(date),
+           CMA = (BigConservative + SmallConservative)/2 - 
+             (BigAggressive + SmallAggressive)/2) %>% # Calculate CMA 
+    select(date, CMA)
+}) %>% 
+  bind_rows()
+CMA
+
+
+WML <- map(Update, .f = function(x){ # Winners Minus Losers Factor
+  BigHigh <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Mom == "High") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigHigh = mean(Ret)) # calculating equal weight return 
+  
+  BigLow <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Mom == "Low") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigLow = mean(Ret)) # calculating equal weight return
+  
+  SmallHigh <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Mom == "Hihg") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallHigh = mean(Ret)) # calculating equal weight return
+  
+  SmallLow <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Mom == "Low") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallLow = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigHigh %>% 
+    full_join(BigLow, by = "date") %>% 
+    full_join(SmallHigh, by = "date") %>% 
+    full_join(SmallLow, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigHigh:SmallLow, as.numeric),
+           date = as.Date(date),
+           WML = (BigHigh + SmallHigh)/2 - 
+             (BigLow + SmallLow)/2) %>% # Calculate WML 
+    select(date, WML)
+}) %>% 
+  bind_rows()
+WML
+
+
+Rev <- map(Update, .f = function(x){ # Reversal Factor
+  BigHigh <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Mom == "High") %>% # filtering companies 
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigHigh = mean(Ret)) # calculating equal weight return 
+  
+  BigLow <- Classification[[paste(x)]] %>% 
+    filter(Size == "Big",
+           Mom == "Low") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(BigLow = mean(Ret)) # calculating equal weight return
+  
+  SmallHigh <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Mom == "Hihg") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallHigh = mean(Ret)) # calculating equal weight return
+  
+  SmallLow <- Classification[[paste(x)]] %>% 
+    filter(Size == "Small",
+           Mom == "Low") %>% # filtering companies
+    group_by(date) %>% # grouping all tickers by date
+    summarise(SmallLow = mean(Ret)) # calculating equal weight return
+  
+  # Merging all data frames
+  BigHigh %>% 
+    full_join(BigLow, by = "date") %>% 
+    full_join(SmallHigh, by = "date") %>% 
+    full_join(SmallLow, by = "date") %>% 
+    zoo::na.fill(0) %>% 
+    as_tibble() %>% 
+    mutate(across(BigHigh:SmallLow, as.numeric),
+           date = as.Date(date),
+           Rev = (BigLow + SmallLow)/2 - 
+             (BigHigh + SmallHigh)/2) %>% # Calculate Rev
+    select(date, Rev)
+}) %>% 
+  bind_rows()
+Rev
+
+
+# Save all 7 factors
+
+FF_Factors <- RMRF %>% 
+  inner_join(SMB, by = "date") %>% 
+  inner_join(HML, by = "date") %>% 
+  inner_join(RMW, by = "date") %>% 
+  inner_join(CMA, by = "date") %>% 
+  inner_join(WML, by = "date") %>% 
+  inner_join(Rev, by = "date") %>% 
+  mutate_all(round, digits = 4)
+FF_Factors
+
+
+FF_Factors %>% 
+  write_csv("FF_Factors.csv")
+
+
+# Evaluate factors
+
+ticker = "PETR4"
+
+
+df <- AdjClose %>% 
+  filter(Ticker == ticker) %>% 
+  select(date, Ret) %>% 
+  rename(ticker = Ret) %>% 
+  inner_join(FF_Factors, by = "date") %>% 
+  filter(date >= "2018-01-01")
+df
+
+
+LR <- lm(ticker ~ RMRF + SMB + HML + RMW + CMA + WML + Rev, data = df)
+summary(LR)
+
+
+
+
+
+
+
+
+
+
+
+
+
+

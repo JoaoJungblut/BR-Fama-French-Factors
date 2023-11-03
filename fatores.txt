@@ -1,0 +1,76 @@
+FATORES:
+
+- prêmio de risco (R_m - R_f);
+- small minus big (SMB);
+- high minus low (HML);
+- robust minus weak (RMW);
+- conservative minus agressive (CMA);
+- winer minus losers (WML);
+- reversal factor (retorno a média);
+
+#######################################
+
+PORTFOLIOS:
+
+- size and book-to-market:
+	* small (value/ neutral/ growth);
+	* big (value/ neutral/ growth);
+
+- size and operating profitability:
+	* small (robust/ neutral/ weak);
+	* big (robust/ neutral/ weak);
+
+- size and investment:
+	* small (conservative/ neutral/ aggressive);
+	* big (conservative/ neutral/ aggressive);
+
+- size and momentum:
+	* small (high/ low);
+	* big (high/ low);
+
+- size and reversal:
+	* small (high/ low);
+	* big (high/ low);
+
+TAMANHO DA COMPANHIA:
+
+- 9 primeiras ações de cada;
+
+- small:
+	* abaixo da mediana do valor/ capitalização de mercado (ME);
+
+- big:
+	* acima da mediana do valor/ capitalização de mercado (ME);
+
+INDICADORES:
+
+- book-to-market = BE/ ME;
+- operating profitability = EBITDA/ BE;
+- investment = ROA;
+- momentum = (P_t - P_(t - 250))/P_(t - 250)
+
+#######################################
+
+CONSTRUÇÃO DOS FATORES:
+
+- selecionar empresas com ME > 0;
+- obter a mediana do ME e separar em small ou big;
+- classificação de acordo com indicador (BE/ME, OP, I):
+	* 0 - 30% (growth, weak ou conservative);
+	* 30 - 70% (neutral);
+	* 70 - 100 % (value, robust ou aggressive);
+
+- SMB:
+	* B/M = 1/3(small value + small neutral + small growth) - 1/3(big value + big neutral + big growth);
+	* OP = 1/3(small robust + small neutral + small weak) - 1/3(big robust + big neutral + big growth);	
+	* INV = 1/3(small conservative + small neutral + small aggressive) - 1/3(big conservative + big neutral + big aggressive);
+
+	SMB = (1/3)*(SMB_BM + SMB_OP + SMB_INV)
+
+- HML = 1/2(small value + big value) - 1/2(small growth + big growth);
+- RMW = 1/2(small robust + big robust) - 1/2(small weak + big weak);
+- CMA = 1/2(small conservative + big conservative) - 1/2(small aggressive + big aggressive);
+- WML = 1/2(small high + big high) - 1/2(small low - big low);
+- ST_rev = 1/2(small low + big low) - 1/2(small high + big high);
+- realizar rebalanceamento ao final de junho;
+

@@ -5,6 +5,7 @@
 library(tidyverse)
 library(lubridate)
 library(readxl)
+library(ggplot2)
 
 
 # Removing variables
@@ -76,15 +77,15 @@ OperatingProfitability <- read_excel("OperatingProfitability.xlsx")[-1,] %>%
 OperatingProfitability
 
 
-ROA <- read_excel("ROA.xlsx")[-1,] %>% 
+Investment <- read_excel("ROA.xlsx")[-1,] %>% 
   mutate(date = as.Date(data), # convert to date format
          across(VALE3:WHMT3, as.numeric), # convert to numeric format
          m = month(date, label = TRUE)) %>% # extract month from date
   select(date, m, everything(), -data) %>% # select date, month and tickers
-  gather("Ticker", "ROA", -c(date, m)) %>% # adjust to panel data
+  gather("Ticker", "Investment", -c(date, m)) %>% # adjust to panel data
   zoo::na.locf(fromLast = FALSE) %>% # fill omitted values from start
   na.omit()
-ROA
+Investment
 
 
 # Create necessary indicators
@@ -141,7 +142,7 @@ Symbols
 
 # Classifying stocks with indicators 
 
-Size <- map(Update, .f = function(x){
+Classification <- map(Update, .f = function(x){
   # Defining stocks per size in Small and Big
   Size <- MarketValue %>% 
     filter(Ticker %in% Symbols[[paste(x)]], # filter Ibov stocks 
@@ -155,87 +156,88 @@ Size <- map(Update, .f = function(x){
     arrange(desc(MarketValue)) %>% # sorting stocks by size 
     filter(MarketValue > 0) %>% # exclude negative Market Value
     mutate(Size = case_when(MarketValue >= median(MarketValue) ~ "Big",
-                            T ~ "Small"))
+                            T ~ "Small")) %>% 
+    select(date, Ticker, Size) %>% 
+    arrange(Ticker)
   
-  # Keep only the 9 biggest and the 9 smallest
-  biggest <- Size %>% head(9)
-  smallest <- Size %>% tail(9)
-  
-  biggest %>% 
-    bind_rows(smallest) %>% 
-    select(-MarketValue)
-})
-names(Size) <- Update
-Size
-
-
-BM <-  map(Update, .f = function(x){
   # Defining stocks per value in Growth, Neutral or Value
-  BooktoMarket %>% 
-    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>% 
+  BM <- BooktoMarket %>% 
+    filter(Ticker %in% Symbols[[paste(x)]], # filter Ibov stocks 
+           m == Month,
+           date <= x) %>% 
+    select(-m) %>% 
+    group_by(Ticker) %>% # grouping by ticker to select last value
+    summarise(date = last(date),
+              BM = last(BM)) %>% 
+    ungroup() %>% 
     mutate(LowerQuantile = quantile(BM, 0.3),
            UpperQuantile = quantile(BM, 0.7),
            BM = case_when(BM <= LowerQuantile ~ "Growth",
                           BM > LowerQuantile &
                             BM < UpperQuantile ~ "Neutral",
                           BM >= UpperQuantile ~ "Value")) %>% 
-    select(-c(Size, m, LowerQuantile, UpperQuantile))
-})
-names(BM) <- Update
-BM
-
-
-OP <- map(Update, .f = function(x){
+    select(date, Ticker, BM) %>% 
+    arrange(Ticker)
+  
   # Defining stocks per profitability in Weak, Neutral or Robust
-  OperatingProfitability %>% 
-    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>% 
+  OP <- OperatingProfitability %>% 
+    filter(Ticker %in% Symbols[[paste(x)]], # filter Ibov stocks 
+           m == Month,
+           date <= x) %>% 
+    select(-m) %>% 
+    group_by(Ticker) %>% # grouping by ticker to select last value
+    summarise(date = last(date),
+              OP = last(OP)) %>% 
+    ungroup() %>%
     mutate(LowerQuantile = quantile(OP, 0.3),
            UpperQuantile = quantile(OP, 0.7),
            OP = case_when(OP <= LowerQuantile ~ "Weak",
                           OP > LowerQuantile &
                             OP < UpperQuantile ~ "Neutral",
                           OP >= UpperQuantile ~ "Robust")) %>% 
-    select(-c(Size, m, LowerQuantile, UpperQuantile))
-})
-names(OP) <- Update
-OP
-
-
-Investment <- map(Update, .f = function(x){
+    select(date, Ticker, OP) %>% 
+    arrange(Ticker)
+  
   # Defining stocks per investment in Conservative, Neutral or Aggressive
-  ROA %>% 
-    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>% 
-    mutate(LowerQuantile = quantile(ROA, 0.3),
-           UpperQuantile = quantile(ROA, 0.7),
-           Inv = case_when(ROA <= LowerQuantile ~ "Conservative",
-                           ROA > LowerQuantile &
-                             ROA < UpperQuantile ~ "Neutral",
-                           ROA >= UpperQuantile ~ "Aggressive")) %>% 
-    select(-c(Size, m, LowerQuantile, UpperQuantile))
-})
-names(Investment) <- Update
-Investment
-
-
-Mom <- map(Update, .f = function(x){
+  Inv <- Investment %>% 
+    filter(Ticker %in% Symbols[[paste(x)]], # filter Ibov stocks 
+           m == Month,
+           date <= x) %>% 
+    select(-m) %>% 
+    group_by(Ticker) %>% # grouping by ticker to select last value
+    summarise(date = last(date),
+              Investment = last(Investment)) %>% 
+    ungroup() %>%
+    mutate(LowerQuantile = quantile(Investment, 0.3),
+           UpperQuantile = quantile(Investment, 0.7),
+           Inv = case_when(Investment <= LowerQuantile ~ "Conservative",
+                           Investment > LowerQuantile &
+                             Investment < UpperQuantile ~ "Neutral",
+                           Investment >= UpperQuantile ~ "Aggressive")) %>% 
+    select(date, Ticker, Inv) %>% 
+    arrange(Ticker)
+  
   # Defining stocks per momentum in High or Low
-  AdjClose %>% 
-    inner_join(Size[[paste(x)]], by = c("date", "Ticker")) %>%
+  Mom <- AdjClose %>% 
+    filter(Ticker %in% Symbols[[paste(x)]], # filter Ibov stocks 
+           m == Month,
+           date <= x) %>% 
+    select(-m) %>% 
+    group_by(Ticker) %>% # grouping by ticker to select last value
+    summarise(date = last(date),
+              Mom = last(Mom)) %>% 
+    ungroup() %>% 
     mutate(Mom = case_when(Mom <= median(Mom) ~ "Low",
                            Mom > median(Mom) ~ "High")) %>% 
-    select(-c(Size, m, AdjClose, Ret))
-})
-names(Mom) <- Update
-Mom
-
-
-Classification <- map(Update, .f = function(x){
+    select(date, Ticker, Mom) %>% 
+    arrange(Ticker)
+  
   # Merging all data frames 
-  Class <- Size[[paste(x)]] %>% 
-    inner_join(BM[[paste(x)]], by = c("date", "Ticker")) %>% 
-    inner_join(OP[[paste(x)]], by = c("date", "Ticker")) %>% 
-    inner_join(Investment[[paste(x)]], by = c("date", "Ticker")) %>% 
-    inner_join(Mom[[paste(x)]], by = c("date", "Ticker")) %>% 
+  Class <- Size %>% 
+    inner_join(BM, by = c("date", "Ticker")) %>% 
+    inner_join(OP, by = c("date", "Ticker")) %>% 
+    inner_join(Inv, by = c("date", "Ticker")) %>% 
+    inner_join(Mom, by = c("date", "Ticker")) %>% 
     select(- date)
   
   AdjClose %>% 
@@ -245,7 +247,7 @@ Classification <- map(Update, .f = function(x){
     select(- c(AdjClose, Mom, m)) %>% 
     left_join(Class, by = "Ticker") %>% 
     na.omit()
-}) 
+})
 names(Classification) <- Update
 Classification
 
@@ -659,7 +661,18 @@ FF_Factors %>%
 
 # Evaluate factors
 
-ticker = "PETR4"
+FF_Factors %>%
+  gather(key = "Factor", value = "Value", -date) %>% 
+  group_by(Factor) %>% 
+  mutate(Value = cumsum(Value)) %>% 
+  ggplot(aes(x = date, y = Value)) +
+  geom_line(aes(color = Factor)) +
+  theme_minimal() +
+  labs(title = "Fama-French Factors", x = "Date", y = "Cumulative Return") +
+  theme(legend.title = element_blank())
+  
+
+ticker = ""
 
 
 df <- AdjClose %>% 
@@ -672,7 +685,5 @@ df
 
 LR <- lm(Ret ~ RMRF + SMB + HML + RMW + CMA, data = df)
 summary(LR)
-
-
 
 

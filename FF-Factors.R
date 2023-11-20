@@ -56,7 +56,7 @@ MarketValue <- read_excel("MarketValue.xlsx")[-1,] %>%
 MarketValue
 
 
-BookValue <- read_excel("BookValeu.xlsx")[-1,] %>% 
+BookValue <- read_excel("BookValue.xlsx")[-1,] %>% 
   zoo::na.fill(0) %>% # fill omited values
   as_tibble() %>% # convert to tibble
   mutate(date = as.Date(data), # convert to date format
@@ -672,7 +672,7 @@ FF_Factors %>%
   theme(legend.title = element_blank())
   
 
-ticker = ""
+ticker = "PETR4"
 
 
 df <- AdjClose %>% 

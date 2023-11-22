@@ -1,6 +1,6 @@
 # Fama-French_Factors
 
-Factor-Based Portfolio Construction is a strategy employed in finance and investment to create diversified portfolios based on specific factors or characteristics of individual stocks. This approach aids investors in identifying stocks with desirable attributes and forming portfolios with the potential to outperform the market. The process involves selecting and classifying stocks based on particular factors, combining them into portfolios, and periodically rebalancing to maintain the desired characteristics.
+Factor-Based Portfolio Construction is a strategy employed in finance and investment to create diversified portfolios based on specific factors or characteristics of individual stocks. This approach aids investors in identifying stocks with desirable attributes and forming portfolios with the potential to outperform the market. The process involves selecting and classifying stocks based on particular factors, combining them into portfolios, and periodically rebalancing to maintain the desired characteristics.The data was downloaded from **Economatica**.
 
 ## Factors
 
